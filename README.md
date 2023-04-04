@@ -1,10 +1,10 @@
 # eventSimulator
 Browser based SSE Event caching and replay support
 
-# Include the js eventSimulator source code
+## Include the js eventSimulator source code
 <script src="eventSimulator.js"></script>
 
-# Create a new EventSimulator object with configuration
+## Create a new EventSimulator object with configuration
 ```
 SIM = new EventSimulator({
   /*
@@ -32,7 +32,7 @@ SIM = new EventSimulator({
 });
 ```
 
-# `register()` for starting the service worker
+## `register()` for starting the service worker
 ```
 /*
   * Calling `register` will register a service-worker and publish 
@@ -50,7 +50,7 @@ SIM.register()
 });
 ```
 
-# `captureEvents()` for capturing events from an external SSE source
+## `captureEvents()` for capturing events from an external SSE source
 ```
 /*
  * Calling `captureEvents` will open an EventSource(`capture_url`)
@@ -60,7 +60,7 @@ SIM.register()
 SIM.captureEvents();
 ```
 
-# `loadEventsFromStorage()` for loading cached events from localStore
+## `loadEventsFromStorage()` for loading cached events from localStore
 ```
 /*
 * Calling `loadEventsFromStorage` will load the cached events from
@@ -73,7 +73,7 @@ SIM.captureEvents();
 SIM.loadEventsFromStorage();
 ```
 
-# `test(EventSource URL)` for testing the sanity of the replay
+## `test(EventSource URL)` for testing the sanity of the replay
 ```
 /*
 * Calling `test(EventSource URL)` will connect to the specified event source URL.
