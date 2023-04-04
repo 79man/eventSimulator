@@ -2,7 +2,7 @@
 Browser based SSE Event caching and replay support
 
 ## Include the js eventSimulator source code
-<script src="eventSimulator.js"></script>
+`<script src="eventSimulator.js"></script>`
 
 ## Create a new EventSimulator object with configuration
 ```
