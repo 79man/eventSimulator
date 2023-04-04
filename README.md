@@ -48,14 +48,20 @@ SIM.register()
 .catch((error) => {
   console.error("Registration failed", error);
 });
+```
 
+# `captureEvents()` for capturing events from an external SSE source
+```
 /*
  * Calling `captureEvents` will open an EventSource(`capture_url`)
  * event.data from all incoming events will be saved to 
  * localStorage(`localstore_name`)
  */
 SIM.captureEvents();
+```
 
+# `loadEventsFromStorage()` for loading cached events from localStore
+```
 /*
 * Calling `loadEventsFromStorage` will load the cached events from
 * localStorage(`localstore_name`) and publish them to the service-worker.
@@ -65,7 +71,10 @@ SIM.captureEvents();
 * 
 */
 SIM.loadEventsFromStorage();
+```
 
+# `test(EventSource URL)` for testing the sanity of the replay
+```
 /*
 * Calling `test(EventSource URL)` will connect to the specified event source URL.
 * It will print the contents of each message that it receives.
