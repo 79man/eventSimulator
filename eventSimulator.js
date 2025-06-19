@@ -139,7 +139,7 @@ class EventSimulator {
             console.log("serviceWorker is ready");
             self.sendChannelURLtoServiceWorker(self);
             if (self.close_event_supported) {
-              self.sendMessagetoServiceWorker(self, {
+              self.sendMessagetoServiceWorker({
                 message: "send_close_event",
                 send_close_event: true,
               });
