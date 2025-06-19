@@ -1,43 +1,75 @@
 class EventSimulator {
-  constructor(config) {
+  constructor(config = {}) {
+    // Validate configuration
+    if (config.capture_url && typeof config.capture_url !== "string") {
+      throw new Error("capture_url must be a string");
+    }
+    if (
+      config.event_source_url &&
+      typeof config.event_source_url !== "string"
+    ) {
+      throw new Error("event_source_url must be a string");
+    }
+
     this.configuration = {};
     this.configuration.localStorageName =
       config.localstore_name || "fakeEvents";
     this.configuration.captureURL = config.capture_url || null;
 
     this.eventSourceURL = config.event_source_url || "/event-simulator-sse";
-    this.serviceWorker_file = "/eventSimulator/service-worker.js";
+    this.serviceWorker_file = config.service_worker_path || "./service-worker.js";
     this.channel4Broadcast = new BroadcastChannel("sse-events-channel4");
     this.close_event_supported = config.close_event_supported || false;
   }
 
   saveEventToLocalstorage(event) {
-    const events =
-      JSON.parse(localStorage.getItem(this.configuration.localStorageName)) ||
-      [];
+    try {
+      const storageKey = this.configuration.localStorageName;
+      const events = JSON.parse(localStorage.getItem(storageKey)) || [];
 
-    events.push(event.data);
-    localStorage.setItem(
-      this.configuration.localStorageName,
-      JSON.stringify(events)
-    );
+      // Add size limit to prevent memory issues
+      const MAX_EVENTS = 1000;
+      if (events.length >= MAX_EVENTS) {
+        events.shift(); // Remove oldest event
+        console.warn(
+          `Event storage limit reached (${MAX_EVENTS}), removing oldest event`
+        );
+      }
+
+      events.push(event.data);
+      console.log("setItem(", storageKey, JSON.stringify(events), ")");
+
+      localStorage.setItem(storageKey, JSON.stringify(events));
+    } catch (error) {
+      console.error("Failed to save event to localStorage:", error);
+      throw error;
+    }
   }
 
   // This can be invoked even without registering service worker
   captureEvents() {
-    console.log(
-      "Capturing events from",
-      this.configuration.captureURL,
-      "to localStorage(",
-      this.configuration.localStorageName,
-      ")"
-    );
+    if (!this.configuration.captureURL) {
+      throw new Error("capture_url is required for captureEvents()");
+    }
+    console.log("Capturing events from", this.configuration.captureURL);
+
     const eventSource = new EventSource(this.configuration.captureURL);
     self = this;
+
     eventSource.onmessage = function (event) {
-      // Save the events to localStorage
-      self.saveEventToLocalstorage(event);
+      try {
+        self.saveEventToLocalstorage(event);
+      } catch (error) {
+        console.error("Failed to save event to localStorage:", error);
+      }
     };
+
+    eventSource.onerror = function (error) {
+      console.error("EventSource connection error:", error);
+      eventSource.close();
+    };
+
+    return eventSource; // Return for external control
   }
 
   test(eventSourceURL) {
@@ -66,10 +98,17 @@ class EventSimulator {
       });
 
       eventSource.addEventListener("error", (event) => {
-        console.error("Error", event);
+        const errorDetails = {
+          readyState: eventSource.readyState,
+          url: eventSourceURL,
+          timestamp: new Date().toISOString(),
+        };
+        console.error("EventSource Error:", errorDetails, event);
         event_counter = 0;
-        // Handle the error here
-        reject();
+        eventSource.close();
+        reject(
+          new Error(`EventSource failed: ${JSON.stringify(errorDetails)}`)
+        );
       });
 
       eventSource.addEventListener("close", (event) => {
@@ -130,7 +169,7 @@ class EventSimulator {
     return new Promise(function (resolve, reject) {
       if ("serviceWorker" in navigator) {
         navigator.serviceWorker
-          .register("./service-worker.js", { scope: "./" })
+          .register(self.serviceWorker_file, { scope: "./" })
           .then(self.waitUntilInstalled)
           .then(function (payload) {
             return navigator.serviceWorker.ready;
