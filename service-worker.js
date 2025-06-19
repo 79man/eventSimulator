@@ -12,7 +12,7 @@ channel4Broadcast.onmessage = (event) => {
         event.data.event_source_url || null
       );
       if (event.data.event_source_url)
-        eventSourceUrl = event.data.event_source_url;
+        eventSourceURL = event.data.event_source_url;
     } else if (event.data.message == "fake_events") {
       console.log("Received fakeEvents data from Client");
       fakeEvents = event.data.fake_events;
