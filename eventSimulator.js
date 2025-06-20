@@ -17,7 +17,8 @@ class EventSimulator {
     this.configuration.captureURL = config.capture_url || null;
 
     this.eventSourceURL = config.event_source_url || "/event-simulator-sse";
-    this.serviceWorker_file = config.service_worker_path || "./service-worker.js";
+    this.serviceWorker_file =
+      config.service_worker_path || "./service-worker.js";
     this.channel4Broadcast = new BroadcastChannel("sse-events-channel4");
     this.close_event_supported = config.close_event_supported || false;
   }
@@ -49,39 +50,185 @@ class EventSimulator {
   // This can be invoked even without registering service worker
   captureEvents() {
     if (!this.configuration.captureURL) {
-      throw new Error("capture_url is required for captureEvents()");
+      return Promise.reject(
+        new Error("capture_url is required for captureEvents()")
+      );
     }
-    console.log("Capturing events from", this.configuration.captureURL);
 
-    const eventSource = new EventSource(this.configuration.captureURL);
-    self = this;
+    this.currentEventSource = null;
+    this.captureEventEmitter = null;
+    this.captureStatusCallback = null;
+    this.captureEventCount = 0;
 
-    eventSource.onmessage = function (event) {
-      try {
-        self.saveEventToLocalstorage(event);
-      } catch (error) {
-        console.error("Failed to save event to localStorage:", error);
+    const eventEmitter = new EventTarget();
+    let eventCount = 0;
+
+    const capturePromise = new Promise((resolve, reject) => {
+      const eventSource = new EventSource(this.configuration.captureURL);
+      const self = this;
+
+      // Store references for stopCapture()
+      this.currentEventSource = eventSource;
+      this.captureEventEmitter = eventEmitter;
+      this.captureEventCount = eventCount;
+
+      // Emit connecting status
+      eventEmitter.dispatchEvent(
+        new CustomEvent("status", {
+          detail: {
+            status: "connecting",
+            message: "Connecting to SSE stream...",
+            eventCount: 0,
+          },
+        })
+      );
+
+      eventSource.onopen = function () {
+        eventEmitter.dispatchEvent(
+          new CustomEvent("status", {
+            detail: {
+              status: "connected",
+              message: "Connected to SSE stream",
+              eventCount: 0,
+            },
+          })
+        );
+      };
+
+      eventSource.onmessage = function (event) {
+        try {
+          self.saveEventToLocalstorage(event);
+          eventCount++;
+
+          const data = JSON.parse(event.data);
+
+          // Emit capturing status
+          eventEmitter.dispatchEvent(
+            new CustomEvent("status", {
+              detail: {
+                status: "capturing",
+                message: `Captured ${eventCount} events`,
+                eventCount: eventCount,
+                lastEvent: data,
+              },
+            })
+          );
+
+          if (data.id === "CLOSE") {
+            eventSource.close();
+            eventEmitter.dispatchEvent(
+              new CustomEvent("status", {
+                detail: {
+                  status: "completed",
+                  message: `Capture completed. Total events: ${eventCount}`,
+                  eventCount: eventCount,
+                },
+              })
+            );
+            resolve({ status: "completed", totalEvents: eventCount });
+          }
+        } catch (error) {
+          eventEmitter.dispatchEvent(
+            new CustomEvent("status", {
+              detail: {
+                status: "error",
+                message: `Error: ${error.message}`,
+                eventCount: eventCount,
+              },
+            })
+          );
+        }
+      };
+
+      eventSource.onerror = function (error) {
+        eventSource.close();
+        eventEmitter.dispatchEvent(
+          new CustomEvent("status", {
+            detail: {
+              status: "error",
+              message: "EventSource connection failed",
+              eventCount: eventCount,
+            },
+          })
+        );
+        reject(new Error("EventSource connection failed"));
+      };
+    });
+
+    return {
+      promise: capturePromise,
+      on: (event, callback) => eventEmitter.addEventListener(event, callback),
+    };
+  }
+
+  stopCapture() {
+    if (this.currentEventSource) {
+      // Close the EventSource connection
+      this.currentEventSource.close();
+
+      // If using EventEmitter pattern, emit stop event
+      if (this.captureEventEmitter) {
+        this.captureEventEmitter.dispatchEvent(
+          new CustomEvent("status", {
+            detail: {
+              status: "stopped",
+              message: "Capture manually stopped",
+              eventCount: this.captureEventCount || 0,
+            },
+          })
+        );
       }
-    };
 
-    eventSource.onerror = function (error) {
-      console.error("EventSource connection error:", error);
-      eventSource.close();
-    };
+      // Clean up references
+      this.currentEventSource = null;
+      this.captureEventEmitter = null;
+      this.captureStatusCallback = null;
+      this.captureEventCount = 0;
 
-    return eventSource; // Return for external control
+      return true;
+    }
+    return false;
   }
 
   test(eventSourceURL) {
-    return new Promise(function (resolve, reject) {
-      // Create an EventSource object and subscribe to the server-sent events
+    if (!eventSourceURL) {
+      return Promise.reject(new Error("eventSourceURL is required for test()"));
+    }
+
+    const eventEmitter = new EventTarget();
+    let event_counter = 0;
+
+    const testPromise = new Promise((resolve, reject) => {
       console.log("Test:: Trying to Open EventSource", eventSourceURL);
       const eventSource = new EventSource(eventSourceURL);
-      let event_counter = 0;
+
+      // Emit connecting status
+      eventEmitter.dispatchEvent(
+        new CustomEvent("status", {
+          detail: {
+            status: "connecting",
+            message: `Connecting to test EventSource: ${eventSourceURL}`,
+            eventCount: 0,
+          },
+        })
+      );
+
+      eventSource.addEventListener("open", () => {
+        eventEmitter.dispatchEvent(
+          new CustomEvent("status", {
+            detail: {
+              status: "connected",
+              message: "Connected to test EventSource",
+              eventCount: 0,
+            },
+          })
+        );
+      });
 
       eventSource.addEventListener("message", (event) => {
         event_counter++;
         let event_data = JSON.parse(event.data);
+
         console.log(
           "Test:: Received messaged from SSE",
           event_counter,
@@ -91,33 +238,116 @@ class EventSimulator {
           event_data
         );
 
+        // Emit message received status
+        eventEmitter.dispatchEvent(
+          new CustomEvent("status", {
+            detail: {
+              status: "receiving",
+              message: `Received ${event_counter} events`,
+              eventCount: event_counter,
+              lastEvent: event_data,
+            },
+          })
+        );
+
         if ((event_data.id || "NONE") == "CLOSE") {
           console.log("Test:: Received CLOSE message from Server");
           eventSource.close();
+
+          eventEmitter.dispatchEvent(
+            new CustomEvent("status", {
+              detail: {
+                status: "completed",
+                message: `Test completed. Total events received: ${event_counter}`,
+                eventCount: event_counter,
+              },
+            })
+          );
+
+          resolve({
+            status: "completed",
+            totalEvents: event_counter,
+            reason: "close_event_received",
+          });
         }
       });
 
       eventSource.addEventListener("error", (event) => {
-        const errorDetails = {
-          readyState: eventSource.readyState,
-          url: eventSourceURL,
-          timestamp: new Date().toISOString(),
-        };
-        console.error("EventSource Error:", errorDetails, event);
-        event_counter = 0;
-        eventSource.close();
-        reject(
-          new Error(`EventSource failed: ${JSON.stringify(errorDetails)}`)
-        );
+        // Check if this is expected behavior for send_close_event: false
+        if (event_counter > 0 && !this.close_event_supported) {
+          // This might be normal stream termination, not an error
+          console.log(
+            "Stream ended after receiving events (expected for send_close_event: false)"
+          );
+          
+          eventSource.close();
+          event_counter = 0;
+
+          resolve({
+            status: "completed",
+            totalEvents: event_counter,
+            reason: "stream_ended",
+          });
+        } else {
+          // Actual error
+          const errorDetails = {
+            readyState: eventSource.readyState,
+            url: eventSourceURL,
+            timestamp: new Date().toISOString(),
+          };
+          console.error("EventSource Error:", errorDetails, event);
+          event_counter = 0;
+          eventSource.close();
+
+          eventEmitter.dispatchEvent(
+            new CustomEvent("status", {
+              detail: {
+                status: "error",
+                message: `EventSource connection failed: ${JSON.stringify(
+                  errorDetails
+                )}`,
+                eventCount: event_counter,
+              },
+            })
+          );
+
+          reject(
+            new Error(`EventSource failed: ${JSON.stringify(errorDetails)}`)
+          );
+        }
       });
 
       eventSource.addEventListener("close", (event) => {
         console.log("Closed", event);
         event_counter = 0;
-        resolve();
-        // Handle the error here
+
+        eventEmitter.dispatchEvent(
+          new CustomEvent("status", {
+            detail: {
+              status: "closed",
+              message: "EventSource connection closed",
+              eventCount: event_counter,
+            },
+          })
+        );
+
+        resolve({
+          status: "closed",
+          totalEvents: event_counter,
+          reason: "connection_closed",
+        });
       });
+
+      // Store reference for potential stopTest() method
+      this.currentTestEventSource = eventSource;
+      this.testEventEmitter = eventEmitter;
+      this.testEventCount = event_counter;
     });
+
+    return {
+      promise: testPromise,
+      on: (event, callback) => eventEmitter.addEventListener(event, callback),
+    };
   }
 
   waitUntilInstalled(registration) {
@@ -155,12 +385,25 @@ class EventSimulator {
   }
 
   loadEventsFromStorage() {
+    let stored_events =
+      JSON.parse(localStorage.getItem(this.configuration.localStorageName)) ||
+      [];
+
+    console.log("Obtained ", stored_events.length, " events from localStorage");
+
     this.channel4Broadcast.postMessage({
       message: "fake_events",
-      fake_events:
-        JSON.parse(localStorage.getItem(this.configuration.localStorageName)) ||
-        [],
+      fake_events: stored_events,
+      event_source_url: this.eventSourceURL, // Add this line
     });
+  }
+
+  clearEventsFromStorage() {
+    localStorage.setItem(
+      this.configuration.localStorageName,
+      JSON.stringify([])
+    );
+    console.log("Cleared Events from LocalStorage");
   }
 
   register() {
@@ -181,10 +424,11 @@ class EventSimulator {
               self.sendMessagetoServiceWorker({
                 message: "send_close_event",
                 send_close_event: true,
+                event_source_url: self.eventSourceURL, // Add this line
               });
             }
 
-            resolve();
+            resolve("OK");
           })
           .catch((error) => {
             //console.error("Service worker registration failed:", error);

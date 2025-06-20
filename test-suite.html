@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8" />
+  <title>EventSimulator Test Suite</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+    }
+
+    .test-section {
+      margin: 20px 0;
+      padding: 15px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+    }
+
+    .test-results {
+      background: #f5f5f5;
+      padding: 10px;
+      margin: 10px 0;
+    }
+
+    .success {
+      color: green;
+    }
+
+    .error {
+      color: red;
+    }
+
+    .warning {
+      color: orange;
+    }
+
+    button {
+      margin: 5px;
+      padding: 8px 15px;
+    }
+
+    .capture-status {
+      border: 1px solid #ddd;
+      padding: 10px;
+      margin: 10px 0;
+      border-radius: 4px;
+      background: #f9f9f9;
+    }
+
+    .event-preview {
+      font-family: monospace;
+      font-size: 12px;
+      color: #666;
+      margin-top: 5px;
+      padding: 5px;
+      background: #fff;
+      border-radius: 3px;
+    }
+
+    .status {
+      font-weight: bold;
+      color: #0066cc;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>EventSimulator Test Suite</h1>
+
+  <div class="test-section">
+    <h3>Test Scenario 1: Basic Replay Functionality</h3>
+    <button onclick="testBasicReplay()">Run Basic Replay Test</button>
+    <div id="basic-results" class="test-results"></div>
+  </div>
+
+  <div class="test-section">
+    <h3>Test Scenario 2: Capture and Replay with Browser SSE</h3>
+    <button onclick="testCaptureReplay()">Run Capture & Replay Test</button>
+    <div id="capture-results" class="test-results"></div>
+  </div>
+
+  <div class="test-section">
+    <h3>Test Scenario 3: Close Event Support</h3>
+    <button onclick="testCloseEvent()">Test Close Event</button>
+    <div id="close-results" class="test-results"></div>
+  </div>
+
+  <div class="test-section">
+    <h3>Test Scenario 4: Error Handling</h3>
+    <button onclick="testErrorHandling()">Test Error Scenarios</button>
+    <div id="error-results" class="test-results"></div>
+  </div>
+
+  <div class="test-section">
+    <h3>Test Scenario 5: Multiple Configurations</h3>
+    <button onclick="testMultipleConfigs()">Test Different Configs</button>
+    <div id="config-results" class="test-results"></div>
+  </div>
+
+  <div class="test-section">
+    <h3>Test Scenario 6: Storage Management</h3>
+    <button onclick="testStorageManagement()">Test Storage Operations</button>
+    <div id="storage-results" class="test-results"></div>
+  </div>
+
+  <script src="eventSimulator.js"></script>
+  <script>
+    let testResults = {};
+
+    // Enhanced Service Worker with browser-based SSE for testing  
+    function createTestServiceWorker() {
+      const swCode = `  
+        let eventSourceURL = "event-simulator-sse";  
+        let fakeEvents = [];  
+        let send_close_event = false;  
+  
+        const channel4Broadcast = new BroadcastChannel("sse-events-channel4");  
+        channel4Broadcast.onmessage = (event) => {  
+          if (event.data && event.data.message) {  
+            switch (event.data.message) {  
+              case "event_source_url":  
+                if (event.data.event_source_url)  
+                  eventSourceURL = event.data.event_source_url;  
+                break;  
+              case "fake_events":  
+                fakeEvents = event.data.fake_events;  
+                break;  
+              case "send_close_event":  
+                send_close_event = event.data.send_close_event;  
+                break;  
+            }  
+          }  
+        };  
+  
+        self.addEventListener("fetch", (event) => {  
+          // Handle test SSE endpoint for capture testing  
+          if (event.request.url.endsWith("test-capture-source")) {  
+            const stream = new ReadableStream({  
+              start(controller) {  
+                let counter = 0;  
+                const interval = setInterval(() => {  
+                  counter++;  
+                  const eventData = {  
+                    id: counter,  
+                    message: \`Test capture event \${counter}\`,  
+                    timestamp: new Date().toISOString()  
+                  };  
+                    
+                  controller.enqueue(  
+                    new TextEncoder().encode(\`data: \${JSON.stringify(eventData)}\\n\\n\`)  
+                  );  
+                    
+                  if (counter >= 5) {  
+                    clearInterval(interval);  
+                    controller.enqueue(  
+                      new TextEncoder().encode(\`data: \${JSON.stringify({id: "CLOSE"})}\\n\\n\`)  
+                    );  
+                    controller.close();  
+                  }  
+                }, 1000);  
+              }  
+            });  
+  
+            event.respondWith(new Response(stream, {  
+              headers: {  
+                "Content-Type": "text/event-stream",  
+                "Cache-Control": "no-cache",  
+                "Connection": "keep-alive",  
+              },  
+            }));  
+          }  
+          // Handle replay endpoint  
+          else if (event.request.url.endsWith(eventSourceURL)) {  
+            const stream = new ReadableStream({  
+              start(controller) {  
+                fakeEvents.forEach((item, index) => {  
+                  setTimeout(() => {  
+                    controller.enqueue(  
+                      new TextEncoder().encode("data:" + item + "\\n\\n")  
+                    );  
+                  }, index * 1000); // Faster for testing  
+                });  
+  
+                if (send_close_event) {  
+                  setTimeout(() => {  
+                    controller.enqueue(  
+                      new TextEncoder().encode(  
+                        "data:" + JSON.stringify({ id: "CLOSE" }) + "\\n\\n"  
+                      )  
+                    );  
+                  }, (fakeEvents.length + 1) * 1000);  
+                }  
+  
+                setTimeout(() => {  
+                  controller.close();  
+                }, (fakeEvents.length + 2) * 1000);  
+              },  
+            });  
+  
+            event.respondWith(new Response(stream, {  
+              headers: {  
+                "Content-Type": "text/event-stream",  
+                "Cache-Control": "no-cache",  
+                "Connection": "keep-alive",  
+              },  
+            }));  
+          }  
+        });  
+      `;
+
+      const blob = new Blob([swCode], { type: 'application/javascript' });
+      return URL.createObjectURL(blob);
+    }
+
+    // Test 1: Basic Replay Functionality  
+    async function testBasicReplay() {
+      const results = document.getElementById('basic-results');
+      results.innerHTML = '<div class="status">Running basic replay test...</div>';
+
+      try {
+        // Pre-populate localStorage with test data  
+        const testEvents = [
+          '{"id": 1, "message": "Test event 1"}',
+          '{"id": 2, "message": "Test event 2"}',
+          '{"id": 3, "message": "Test event 3"}',
+          '{ "id": "CLOSE" }'
+        ];
+        localStorage.setItem('testEvents', JSON.stringify(testEvents));
+
+        // Show initial setup status  
+        updateBasicReplayUI(results, {
+          status: 'setup',
+          message: `Pre-populated localStorage with ${testEvents.length} test events`,
+          eventCount: testEvents.length
+        });
+
+        const sim = new EventSimulator({
+          event_source_url: "basic-test-sse",
+          localstore_name: "testEvents",
+          close_event_supported: true
+        });
+
+        // Register service worker with status updates  
+        updateBasicReplayUI(results, {
+          status: 'registering',
+          message: 'Registering service worker...',
+          eventCount: 0
+        });
+
+        reg_status = await sim.register();
+        console.log('reg_status', reg_status);
+        if (reg_status == 'OK') {
+          await sim.loadEventsFromStorage();
+
+          updateBasicReplayUI(results, {
+            status: 'loaded',
+            message: 'Events loaded to service worker, starting replay test...',
+            eventCount: testEvents.length
+          });
+
+          // Start test with EventEmitter pattern for continuous updates  
+          const testResult = sim.test("basic-test-sse");
+          const receivedEvents = [];
+
+          // Connect to EventEmitter for real-time updates  
+          testResult.on('status', (event) => {
+            const status = event.detail;
+            updateBasicReplayUI(results, status);
+
+            // Track received events for verification  
+            if (status.lastEvent) {
+              receivedEvents.push(status.lastEvent);
+            }
+          });
+
+          // Wait for test completion  
+          const finalResult = await testResult.promise;
+          console.log("testResult", finalResult);
+
+          // Verify all events were received  
+          const expectedEventCount = testEvents.length; // Including CLOSE event  
+          const actualEventCount = receivedEvents.length;
+
+          if (actualEventCount === expectedEventCount) {
+            // Verify event content matches  
+            let allEventsMatch = true;
+            const originalEvents = testEvents.map(eventStr => JSON.parse(eventStr));
+
+            for (let i = 0; i < originalEvents.length; i++) {
+              const original = originalEvents[i];
+              const received = receivedEvents[i];
+
+              if (JSON.stringify(original) !== JSON.stringify(received)) {
+                allEventsMatch = false;
+                break;
+              }
+            }
+
+            if (allEventsMatch) {
+              updateBasicReplayUI(results, {
+                status: 'verified',
+                message: `✓ All ${expectedEventCount} events verified successfully`,
+                eventCount: actualEventCount
+              });
+
+              results.innerHTML += '<div class="success">✓ Basic replay test passed - All events received and verified</div>';
+              testResults.basicReplay = true;
+            } else {
+              updateBasicReplayUI(results, {
+                status: 'error',
+                message: 'Event content verification failed',
+                eventCount: actualEventCount
+              });
+
+              results.innerHTML += '<div class="error">✗ Basic replay test failed - Event content mismatch</div>';
+              testResults.basicReplay = false;
+            }
+          } else {
+            updateBasicReplayUI(results, {
+              status: 'error',
+              message: `Expected ${expectedEventCount} events, received ${actualEventCount}`,
+              eventCount: actualEventCount
+            });
+
+            results.innerHTML += `<div class="error">✗ Basic replay test failed - Expected ${expectedEventCount} events, received ${actualEventCount}</div>`;
+            testResults.basicReplay = false;
+          }
+        }
+      } catch (error) {
+        updateBasicReplayUI(results, {
+          status: 'error',
+          message: `Test failed: ${error.message}`,
+          eventCount: 0
+        });
+
+        results.innerHTML += `<div class="error">✗ Basic replay test failed: ${error.message}</div>`;
+        testResults.basicReplay = false;
+      }
+    }
+
+    // Test 2: Capture and Replay  
+    async function testCaptureReplay() {
+      const results = document.getElementById('capture-results');
+      results.innerHTML = '<div class="status">Running capture & replay test...</div>';
+
+      try {
+        const sim = new EventSimulator({
+          event_source_url: "capture-test-sse",
+          capture_url: "generate-fake-events-sse-stream",
+          localstore_name: "capturedTestEvents",
+          close_event_supported: true
+        });
+
+        await sim.register();
+
+        sim.clearEventsFromStorage();
+
+        // Start capture with EventEmitter  
+        const captureResult = sim.captureEvents();
+
+        // Connect EventEmitter to UI updates  
+        captureResult.on('status', (event) => {
+          const status = event.detail;
+          updateCaptureUI(results, status);
+        });
+
+        // Wait for capture to complete  
+        const captureTestResult = await captureResult.promise;
+        console.log("captureTestResult", captureTestResult);
+
+        // Load and replay captured events  
+        results.innerHTML += '<div>Loading captured events for replay...</div>';
+        sim.loadEventsFromStorage();
+
+        // Test the replay          
+        const testResult = sim.test("capture-test-sse");
+
+        // Connect EventEmitter to UI updates  
+        testResult.on('status', (event) => {
+          const status = event.detail;
+          updateTestUI(results, status);
+        });
+
+        const replayTestResult = await testResult.promise;
+        console.log("Replay Test completed:", replayTestResult);
+
+        if (replayTestResult.totalEvents == captureTestResult.totalEvents) {
+          results.innerHTML += '<div class="success">✓ Capture & replay test completed successfully</div>'; testResults.captureReplay = true;
+        } else {
+          results.innerHTML += `<div class="error">✗ Mismatch: Captured ${captureTestResult.totalEvents} & replayed ${replayTestResult.totalEvents}: </div>`;
+          testResults.captureReplay = false;
+        }
+
+      } catch (error) {
+        results.innerHTML += `<div class="error">✗ Capture & replay test failed: ${error.message}</div>`;
+        testResults.captureReplay = false;
+      }
+    }
+
+    // Test 3: Close Event Support  
+    async function testCloseEvent() {
+      const results = document.getElementById('close-results');
+      results.innerHTML = '<div class="status">Testing close event support...</div>';
+
+      try {
+        const testEvents = ['{"id": 1, "message": "Event before close"}'];
+        localStorage.setItem('closeTestEvents', JSON.stringify(testEvents));
+
+        const sim = new EventSimulator({
+          event_source_url: "close-test-sse",
+          localstore_name: "closeTestEvents",
+          close_event_supported: true
+        });
+
+        await sim.register();
+        sim.loadEventsFromStorage();
+
+        // Custom test to verify close event  
+        const eventSource = new EventSource("close-test-sse");
+        let receivedClose = false;
+
+        eventSource.addEventListener("message", (event) => {
+          const data = JSON.parse(event.data);
+          if (data.id === "CLOSE") {
+            receivedClose = true;
+            eventSource.close();
+            results.innerHTML = '<div class="success">✓ Close event test passed</div>';
+            testResults.closeEvent = true;
+          }
+        });
+
+        setTimeout(() => {
+          if (!receivedClose) {
+            results.innerHTML = '<div class="error">✗ Close event not received</div>';
+            testResults.closeEvent = false;
+          }
+        }, 5000);
+
+      } catch (error) {
+        results.innerHTML = `<div class="error">✗ Close event test failed: ${error.message}</div>`;
+        testResults.closeEvent = false;
+      }
+    }
+
+    // Test 4: Error Handling  
+    async function testErrorHandling() {
+      const results = document.getElementById('error-results');
+      results.innerHTML = '<div class="status">Testing error scenarios...</div>';
+
+      try {
+        // Test 1: Invalid capture URL  
+        const sim1 = new EventSimulator({
+          capture_url: "nonexistent-endpoint",
+          localstore_name: "errorTest1"
+        });
+
+        try {
+          sim1.captureEvents();
+          results.innerHTML += '<div class="warning">⚠ Expected error for invalid URL not thrown</div>';
+        } catch (e) {
+          results.innerHTML += '<div class="success">✓ Invalid URL error handled correctly</div>';
+        }
+
+        // Test 2: Test with invalid EventSource URL  
+        const sim2 = new EventSimulator({
+          event_source_url: "invalid-test-sse",
+          localstore_name: "errorTest2"
+        });
+
+        await sim2.register();
+
+        try {
+          await sim2.test("nonexistent-sse-endpoint");
+          results.innerHTML += '<div class="warning">⚠ Expected test error not thrown</div>';
+        } catch (e) {
+          results.innerHTML += '<div class="success">✓ Test error handled correctly</div>';
+        }
+
+        testResults.errorHandling = true;
+      } catch (error) {
+        results.innerHTML += `<div class="error">✗ Error handling test failed: ${error.message}</div>`;
+        testResults.errorHandling = false;
+      }
+    }
+
+    // Test 5: Multiple Configurations  
+    async function testMultipleConfigs() {
+      const results = document.getElementById('config-results');
+      results.innerHTML = '<div class="status">Testing multiple configurations...</div>';
+
+      try {
+        const configs = [
+          {
+            event_source_url: "config1-sse",
+            localstore_name: "config1Events",
+            close_event_supported: true
+          },
+          {
+            event_source_url: "config2-sse",
+            localstore_name: "config2Events",
+            close_event_supported: false
+          }
+        ];
+
+        const testResults = [];
+
+        for (let i = 0; i < configs.length; i++) {
+          const testEvents = [
+            `{"id": ${i + 1}, "config": "test${i + 1}"}`,
+          ];
+
+          if (configs[i].close_event_supported) {
+            testEvents.push(`{"id": "CLOSE"}`); // Add CLOSE event for config with close_event_supported: true
+          }
+
+          const sim = new EventSimulator(configs[i]);
+          await sim.register();
+
+          sim.clearEventsFromStorage();
+
+          console.log("Pushing Events", testEvents)
+          localStorage.setItem(configs[i].localstore_name, JSON.stringify(testEvents));
+
+          sim.loadEventsFromStorage();
+
+          results.innerHTML += `<div>✓ Configuration ${i + 1} initialized successfully</div>`;
+
+          // Actually test the configuration works end-to-end  
+          try {
+            const testResult = sim.test(configs[i].event_source_url);
+            const receivedEvents = [];
+
+            // Track events for verification  
+            testResult.on('status', (event) => {
+              if (event.detail.lastEvent) {
+                receivedEvents.push(event.detail.lastEvent);
+              }
+            });
+
+            const finalResult = await testResult.promise;
+
+            // Verify configuration-specific behavior  
+            const expectedCloseEvent = configs[i].close_event_supported;
+            const receivedCloseEvent = receivedEvents.some(event => event.id === "CLOSE");
+
+            if (expectedCloseEvent === receivedCloseEvent) {
+              results.innerHTML += `<div>✓ Configuration ${i + 1} close event behavior verified</div>`;
+              testResults.push(true);
+            } else {
+              results.innerHTML += `<div class="error">✗ Configuration ${i + 1} close event mismatch</div>`;
+              testResults.push(false);
+            }
+
+          } catch (error) {
+            results.innerHTML += `<div class="error">✗ Configuration ${i + 1} test failed: ${error.message}</div>`;
+            testResults.push(false);
+          }
+        }
+
+        // Overall result  
+        const allPassed = testResults.every(result => result === true);
+        if (allPassed) {
+          results.innerHTML += '<div class="success">✓ Multiple configurations test passed</div>';
+          testResults.multipleConfigs = true;
+        } else {
+          results.innerHTML += '<div class="error">✗ Some configuration tests failed</div>';
+          testResults.multipleConfigs = false;
+        }
+
+      } catch (error) {
+        results.innerHTML += `<div class="error">✗ Multiple configurations test failed: ${error.message}</div>`;
+        testResults.multipleConfigs = false;
+      }
+    }
+
+    // Test 6: Storage Management  
+    async function testStorageManagement() {
+      const results = document.getElementById('storage-results');
+      results.innerHTML = '<div class="status">Testing storage operations...</div>';
+
+      try {
+        const sim = new EventSimulator({
+          localstore_name: "storageTestEvents"
+        });
+
+        // Test storage operations  
+        const testEvent = { data: '{"id": 1, "test": "storage"}' };
+        sim.saveEventToLocalstorage(testEvent);
+
+        const stored = JSON.parse(localStorage.getItem("storageTestEvents"));
+        if (stored && stored.length === 1) {
+          results.innerHTML += '<div class="success">✓ Event storage working</div>';
+        }
+
+        // Test loading events  
+        sim.loadEventsFromStorage();
+        results.innerHTML += '<div class="success">✓ Event loading working</div>';
+
+        // Test storage cleanup  
+        localStorage.removeItem("storageTestEvents");
+        results.innerHTML += '<div class="success">✓ Storage cleanup working</div>';
+
+        testResults.storageManagement = true;
+      } catch (error) {
+        results.innerHTML += `<div class="error">✗ Storage management test failed: ${error.message}</div>`;
+        testResults.storageManagement = false;
+      }
+    }
+
+    // Helper function for basic replay UI updates
+    function updateBasicReplayUI(resultsElement, status) {
+      const statusDiv = resultsElement.querySelector('.replay-status') ||
+        (() => {
+          const div = document.createElement('div');
+          div.className = 'replay-status';
+          resultsElement.appendChild(div);
+          return div;
+        })();
+
+      switch (status.status) {
+        case 'setup':
+          statusDiv.innerHTML = '<div class="status">📝 Setting up test data...</div>';
+          break;
+        case 'registering':
+          statusDiv.innerHTML = '<div class="status">🔄 Registering service worker...</div>';
+          break;
+        case 'registered':
+          statusDiv.innerHTML = '<div class="success">✅ Service worker registered</div>';
+          break;
+        case 'loading':
+          statusDiv.innerHTML = '<div class="status">📤 Loading events to service worker...</div>';
+          break;
+        case 'loaded':
+          statusDiv.innerHTML = '<div class="success">✅ Events loaded, starting replay...</div>';
+          break;
+        case 'connecting':
+          statusDiv.innerHTML = '<div class="status">🔄 Connecting to replay EventSource...</div>';
+          break;
+        case 'connected':
+          statusDiv.innerHTML = '<div class="success">✅ Connected! Waiting for replayed events...</div>';
+          break;
+        case 'receiving':
+          statusDiv.innerHTML = `<div class="status">📨 Received ${status.eventCount} replayed events</div>`;
+          if (status.lastEvent) {
+            statusDiv.innerHTML += `<div class="event-preview">Latest: ${JSON.stringify(status.lastEvent).substring(0, 100)}...</div>`;
+          }
+          break;
+        case 'completed':
+          statusDiv.innerHTML = `<div class="success">✅ Replay completed! Total: ${status.eventCount} events</div>`;
+          break;
+        case 'verified':
+          statusDiv.innerHTML = `<div class="success">✅ ${status.message}</div>`;
+          break;
+        case 'error':
+          statusDiv.innerHTML = `<div class="error">❌ Error: ${status.message}</div>`;
+          break;
+      }
+    }
+
+    // Helper function to update UI based on status  
+    function updateCaptureUI(resultsElement, status) {
+      const statusDiv = resultsElement.querySelector('.capture-status') ||
+        (() => {
+          const div = document.createElement('div');
+          div.className = 'capture-status';
+          resultsElement.appendChild(div);
+          return div;
+        })();
+
+      switch (status.status) {
+        case 'connecting':
+          statusDiv.innerHTML = '<div class="status">🔄 Connecting to SSE stream...</div>';
+          break;
+        case 'connected':
+          statusDiv.innerHTML = '<div class="success">✅ Connected! Waiting for events...</div>';
+          break;
+        case 'capturing':
+          statusDiv.innerHTML = `<div class="status">📥 Captured ${status.eventCount} events</div>`;
+          if (status.lastEvent) {
+            statusDiv.innerHTML += `<div class="event-preview">Latest: ${JSON.stringify(status.lastEvent).substring(0, 100)}...</div>`;
+          }
+          break;
+        case 'completed':
+          statusDiv.innerHTML = `<div class="success">✅ Capture complete! Total: ${status.eventCount} events</div>`;
+          break;
+        case 'error':
+          statusDiv.innerHTML = `<div class="error">❌ Error: ${status.message}</div>`;
+          break;
+      }
+    }
+
+    // Helper function to update UI based on test status  
+    function updateTestUI(resultsElement, status) {
+      const statusDiv = resultsElement.querySelector('.test-status') ||
+        (() => {
+          const div = document.createElement('div');
+          div.className = 'test-status';
+          resultsElement.appendChild(div);
+          return div;
+        })();
+
+      switch (status.status) {
+        case 'connecting':
+          statusDiv.innerHTML = '<div class="status">🔄 Connecting to test EventSource...</div>';
+          break;
+        case 'connected':
+          statusDiv.innerHTML = '<div class="success">✅ Connected! Waiting for test events...</div>';
+          break;
+        case 'receiving':
+          statusDiv.innerHTML = `<div class="status">📨 Received ${status.eventCount} test events</div>`;
+          if (status.lastEvent) {
+            statusDiv.innerHTML += `<div class="event-preview">Latest: ${JSON.stringify(status.lastEvent).substring(0, 100)}...</div>`;
+          }
+          break;
+        case 'completed':
+          statusDiv.innerHTML = `<div class="success">✅ Test completed! Total: ${status.eventCount} events</div>`;
+          break;
+        case 'closed':
+          statusDiv.innerHTML = `<div class="success">✅ Test connection closed. Total: ${status.eventCount} events</div>`;
+          break;
+        case 'error':
+          statusDiv.innerHTML = `<div class="error">❌ Test error: ${status.message}</div>`;
+          break;
+      }
+    }
+
+    // Initialize enhanced service worker on page load  
+    /*
+    document.addEventListener("DOMContentLoaded", async () => {  
+      // Register enhanced service worker with browser-based SSE capabilities  
+      if ('serviceWorker' in navigator) {  
+        try {  
+          const swUrl = createTestServiceWorker();  
+          await navigator.serviceWorker.register(swUrl);  
+          console.log('Enhanced test service worker registered');  
+        } catch (error) {  
+          console.error('Service worker registration failed:', error);  
+        }  
+      }  
+    });  
+    */
+
+    // Run all tests sequentially  
+    async function runAllTests() {
+      const allResults = document.createElement('div');
+      allResults.innerHTML = '<h2>Running All Tests...</h2>';
+      document.body.appendChild(allResults);
+
+      await testBasicReplay();
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      await testCaptureReplay();
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      await testCloseEvent();
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      await testErrorHandling();
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      await testMultipleConfigs();
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      await testStorageManagement();
+
+      // Display summary  
+      const summary = document.createElement('div');
+      summary.className = 'test-section';
+      summary.innerHTML = `  
+        <h3>Test Summary</h3>  
+        <div class="test-results">  
+          ${Object.entries(testResults).map(([test, passed]) =>
+        `<div class="${passed ? 'success' : 'error'}">${passed ? '✓' : '✗'} ${test}</div>`
+      ).join('')}  
+        </div>  
+      `;
+      document.body.appendChild(summary);
+    }
+
+    // Add run all tests button  
+    window.addEventListener('load', () => {
+      const runAllButton = document.createElement('button');
+      runAllButton.textContent = 'Run All Tests';
+      runAllButton.onclick = runAllTests;
+      runAllButton.style.cssText = 'background: #007cba; color: white; padding: 10px 20px; font-size: 16px; margin: 20px 0;';
+      document.body.insertBefore(runAllButton, document.body.firstChild.nextSibling);
+    });  
+  </script>
+</body>
+
+</html>
