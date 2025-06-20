@@ -14,7 +14,7 @@ class EventSimulator {
     this.configuration = {};
     this.configuration.localStorageName =
       config.localstore_name || "fakeEvents";
-    this.configuration.captureURL = config.capture_url || null;
+    this.configuration.captureURL = config.capture_url || "generate-fake-events-sse-stream";
 
     this.eventSourceURL = config.event_source_url || "/event-simulator-sse";
     this.serviceWorker_file =
